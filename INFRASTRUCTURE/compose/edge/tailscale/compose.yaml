@@ -1,0 +1,37 @@
+# Athena — Tailscale (private tailnet identity)
+#
+#   NOTE: this container is a node on the `athena` docker network. Joining a
+#   tailnet gives THIS container a tailnet IP — it does NOT by itself publish
+#   the other containers onto the tailnet. To expose the stack off-LAN, the
+#   gateway (Caddy) must listen on the tailnet interface (tailscale0) or be
+#   reached via `tailscale serve`. See DOCUMENTATION/operations.md.
+#
+#   Node state (identity/keys) is persisted under ${ATHENA_DATA_DIR}/edge/tailscale
+#   — losing it re-keys the tailnet node, so it lives with DATA, not ephemeral.
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: athena-tailscale
+    restart: unless-stopped
+
+    # The Tailscale daemon needs raw socket access.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+
+    environment:
+      # Headless join: set TAILSCALE_AUTHKEY (tskey-...) to auto-join.
+      # Interactive: leave empty, then `docker compose exec tailscale ts login`.
+      TAILSCALE_AUTHKEY: "${TAILSCALE_AUTHKEY:-}"
+      TAILSCALE_ARGS: "${TAILSCALE_ARGS:---advertise-tags=}"
+
+    volumes:
+      - ${ATHENA_DATA_DIR:-./DATA}/edge/tailscale:/var/lib/tailscale
+
+    networks:
+      - athena
+
+networks:
+  athena:
+    external: true

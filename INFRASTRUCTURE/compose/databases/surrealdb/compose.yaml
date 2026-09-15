@@ -1,0 +1,40 @@
+# Athena — SurrealDB (graph + document store)
+#
+#   What Athena PRESERVES:  ${ATHENA_DATA_DIR}/databases/surrealdb   (bind-mounted)
+#   How Athena RUNS it:     this file (image, command, network, restart)
+#
+#   ATHENA_DATA_DIR is set by INFRASTRUCTURE/scripts/*.sh to the absolute
+#   repo-root DATA/ dir. The `:-./DATA` default makes a direct
+#   `docker compose up` from the repo root work too.
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v2
+    container_name: athena-surrealdb
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    command: >
+      start
+      --log info
+      --user ${SURREAL_USER:-root}
+      --pass ${SURREAL_PASSWORD}
+      rocksdb:/mydata/${SURREAL_DB:-athena}
+
+    volumes:
+      - ${ATHENA_DATA_DIR:-./DATA}/databases/surrealdb:/mydata
+
+    networks:
+      - athena
+
+    healthcheck:
+      test: ["CMD", "/surreal", "is-ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  athena:
+    external: true

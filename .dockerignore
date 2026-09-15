@@ -1,0 +1,11 @@
+# Build-context hygiene. Athena services pull prebuilt images (no local
+# Dockerfile), so this is defensive: keep DATA and secrets out of any context.
+DATA/
+.env
+.env.*
+!.env.example
+logs/
+*.log
+.idea/
+.vscode/
+.DS_Store

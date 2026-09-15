@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Athena — Caddy gateway (minimal tier)
+#
+#  Default: everything routes to Open Notebook (the core workspace).
+#  To add a service, uncomment / add a handle_path block below.
+# ═══════════════════════════════════════════════════════════════════════════
+
+{
+    # Automatic HTTPS is disabled on :80; enable for a public domain:
+    #   acme_dns  ...
+}
+
+:80 {
+    encode gzip
+
+    # ── Core: Open Notebook ─────────────────────────────────────────────────
+    reverse_proxy open-notebook:8502
+
+    # ── Scaffold: enable as these services join the stack ──────────────────
+    # redir /portainer /portainer/ 308
+    # handle_path /portainer/*  { reverse_proxy portainer:9000 }
+}

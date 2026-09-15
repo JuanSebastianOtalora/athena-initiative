@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Athena — .gitignore
+#  Rule of thumb: commit the STRUCTURE, never the DATA or the SECRETS.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── DATA: application state / preserved knowledge (local only) ──────────────
+# Ignore everything under DATA/, but keep the .gitkeep placeholders so the
+# directory skeleton survives a clone. (Re-include the dirs first so git can
+# descend, then re-include the placeholder files.)
+DATA/**
+!DATA/**/
+!DATA/**/.gitkeep
+
+# Stray DATA/ trees that can appear UNDER INFRASTRUCTURE (runtime artifacts,
+# e.g. from running compose with the CWD-relative ./DATA default before the
+# ATHENA_DATA_DIR env var was set). These are never canonical — the real data
+# lives at the top-level DATA/ dir — so ignore any DATA/ tree nested under
+# INFRASTRUCTURE, at any depth.
+INFRASTRUCTURE/**/DATA/
+INFRASTRUCTURE/**/DATA/**
+
+# ── Secrets & deployment config ─────────────────────────────────────────────
+# Per-service .env files hold secrets — never commit them.
+# Only the committed .env.example templates are kept.
+.env
+.env.*
+!.env.example
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── OS / editor noise ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+*.swp
+*~

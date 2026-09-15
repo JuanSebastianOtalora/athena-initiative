@@ -1,0 +1,40 @@
+# Athena — Open Notebook (knowledge workspace)
+#
+#   What Athena PRESERVES:  ${ATHENA_DATA_DIR}/ai/opennotebook      (app state)
+#   Externally stored assets: ${ATHENA_ASSETS_DIR}  (mounted read-only)
+#   How Athena RUNS it:     this file
+#
+#   Both data dirs default to repo-root-relative paths; the athena-* scripts
+#   set them to absolute paths automatically.
+services:
+  open-notebook:
+    image: lfnovo/open_notebook:v1-latest
+    container_name: athena-open-notebook
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "${NOTEBOOK_PORT:-8502}:8502"     # web UI
+      - "${NOTEBOOK_API_PORT:-5055}:5055" # API
+
+    volumes:
+      # Application state (sources, embeddings, sqlite, uploads)
+      - ${ATHENA_DATA_DIR:-./DATA}/ai/opennotebook:/app/data
+      # Externally-stored knowledge / assets, read-only
+      - ${ATHENA_ASSETS_DIR:-./DATA/media}:/app/data/assets:ro
+
+    networks:
+      - athena
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8502/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  athena:
+    external: true

@@ -1,0 +1,17 @@
+# Athena — single entry point.
+#
+#   ./athena up      bring up the minimal stack (Caddy, Tailscale, Open Notebook, SurrealDB)
+#   ./athena down    tear down (data preserved in DATA/)
+#   ./athena restart restart every service
+#   ./athena status  show which services are up
+#   ./athena doctor  verify docker, .env files, and secret presence
+#   ./athena help    usage
+#
+# This is a thin wrapper around INFRASTRUCTURE/scripts/athena-*.sh, which is
+# the canonical implementation.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CMD="${1:-help}"
+shift || true
+exec bash "$ROOT/INFRASTRUCTURE/scripts/athena-$CMD.sh" "$@" 2>/dev/null \
+  || { echo "athena: unknown command '$CMD' — try: up | down | restart | status | doctor"; exit 1; }
