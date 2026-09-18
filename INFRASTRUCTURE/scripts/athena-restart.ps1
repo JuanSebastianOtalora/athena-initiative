@@ -1,18 +1,19 @@
 #!/usr/bin/env pwsh
-# athena-restart.ps1 - restart all minimal-stack services (dependency order).
-# The restart output (per-container start/stop) is printed so you can follow
-# the procedure; a final `docker compose ps` shows the resulting state.
+# athena-restart.ps1 - restart all stack services (dependency order).
+# Restart output (per-container start/stop) is printed so you can follow the
+# procedure; a final `docker compose ps` shows the resulting state.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$InfrastructureDir = Split-Path -Parent (Resolve-Path "$PSScriptRoot")
-$ComposeDir = Join-Path $InfrastructureDir "compose"
-$DataDir = Join-Path (Split-Path -Parent $InfrastructureDir) "DATA"
-$Services = @("databases\surrealdb", "ai\opennotebook", "edge\caddy", "edge\tailscale")
+. (Join-Path $PSScriptRoot "athena-startup-order.ps1")
+$Services = Get-AthenaServices
 
-# --- Preflight -------------------------------------------------------------
-Write-Host "  Athena Preflight"
-Write-Host "  ----------------"
+Write-Host ""
+Write-Host "  Athena - restart the stack" -ForegroundColor Cyan
+Write-Host ""
+
+# --- Preflight ---
+Write-Host "  [1] Preflight" -ForegroundColor Yellow
 
 $dockerInstalled = $false
 try {
@@ -20,12 +21,11 @@ try {
     $dockerInstalled = $true
 } catch { $dockerInstalled = $false }
 if (-not $dockerInstalled) {
-    Write-Host "  Docker         [FAIL]  not installed"
-    Write-Host ""
-    Write-Host "  Please install Docker Desktop (https://www.docker.com/products/docker-desktop) and run Athena again."
+    Write-Host "    [FAIL] Docker not installed" -ForegroundColor Red
+    Write-Host "    Please install Docker Desktop (https://www.docker.com/products/docker-desktop) and try again." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Docker         [OK]    installed"
+Write-Host "    [OK] Docker installed" -ForegroundColor Green
 
 $daemonOk = $false
 try {
@@ -33,12 +33,11 @@ try {
     $daemonOk = ($LASTEXITCODE -eq 0)
 } catch { $daemonOk = $false }
 if (-not $daemonOk) {
-    Write-Host "  Docker Engine  [FAIL]  not running"
-    Write-Host ""
-    Write-Host "  Please start Docker Desktop and run Athena again."
+    Write-Host "    [FAIL] Docker Engine not running" -ForegroundColor Red
+    Write-Host "    Please start Docker Desktop and try again." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Docker Engine  [OK]    running"
+Write-Host "    [OK] Docker Engine running" -ForegroundColor Green
 
 $composeOk = $false
 try {
@@ -46,50 +45,45 @@ try {
     $composeOk = ($LASTEXITCODE -eq 0)
 } catch { $composeOk = $false }
 if (-not $composeOk) {
-    Write-Host "  Docker Compose [FAIL]  not available"
-    Write-Host ""
-    Write-Host "  Please install the Docker Compose plugin and run Athena again."
+    Write-Host "    [FAIL] Docker Compose not available" -ForegroundColor Red
+    Write-Host "    Please install the Docker Compose plugin and try again." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Docker Compose [OK]    available"
+Write-Host "    [OK] Docker Compose available" -ForegroundColor Green
 
-Write-Host ""
-Write-Host "  Proceeding..."
-Write-Host ""
-
-# --- Restart (output shown) ------------------------------------------------
-Write-Host "  Athena - restarting stack (dependency order)"
-Write-Host "  --------------------------------------------"
-
-foreach ($svc in $Services) {
-    $dir = Join-Path $ComposeDir $svc
-    if (Test-Path $dir) {
-        Push-Location $dir
-        Write-Host ""
-        Write-Host "  Restarting: $svc"
-        docker compose restart          # <-- output intentionally shown
-        if ($LASTEXITCODE -ne 0) {
-            Pop-Location
-            Write-Host ""
-            Write-Host "  [FAIL]  Restart failed for '$svc'. See output above."
-            exit 1
-        }
-        Pop-Location
-    }
+if ($Services.Count -eq 0) {
+    Write-Host ""
+    Write-Host "  [FAIL] No services found under: $AthenaCompose" -ForegroundColor Red
+    exit 1
 }
 
-# --- Final state -----------------------------------------------------------
+# --- Restart (output shown) ---
 Write-Host ""
-Write-Host "  Resulting state"
-Write-Host "  ---------------"
+Write-Host "  [2] Restarting services" -ForegroundColor Yellow
 foreach ($svc in $Services) {
-    $dir = Join-Path $ComposeDir $svc
-    if (Test-Path $dir) {
-        Push-Location $dir
-        docker compose ps
+    $dir = Join-Path $AthenaCompose $svc
+    Push-Location $dir
+    Write-Host "    $svc" -ForegroundColor Cyan
+    docker compose restart          # <-- output intentionally shown
+    if ($LASTEXITCODE -ne 0) {
         Pop-Location
+        Write-Host "    [FAIL] Restart failed for '$svc'. See output above." -ForegroundColor Red
+        exit 1
     }
+    Pop-Location
+    Write-Host "    [OK] Restarted" -ForegroundColor Green
+}
+
+# --- Final state ---
+Write-Host ""
+Write-Host "  [3] Resulting state" -ForegroundColor Yellow
+foreach ($svc in $Services) {
+    $dir = Join-Path $AthenaCompose $svc
+    Push-Location $dir
+    docker compose ps
+    Pop-Location
 }
 
 Write-Host ""
-Write-Host "  [OK]  Stack restarted."
+Write-Host "  Stack restarted." -ForegroundColor Green
+Write-Host ""

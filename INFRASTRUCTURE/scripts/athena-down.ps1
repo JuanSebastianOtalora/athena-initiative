@@ -1,75 +1,75 @@
 #!/usr/bin/env pwsh
-# athena-down.ps1 - tear down the minimal stack. DATA is preserved.
+# athena-down.ps1 - tear down the Athena stack. DATA is preserved.
+# Stop order = startup order reversed (apps first, network last),
+# so dependencies stay alive until dependents are gone.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$InfrastructureDir = Split-Path -Parent (Resolve-Path "$PSScriptRoot\..")
-$ComposeDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "INFRASTRUCTURE\compose"
+. (Join-Path $PSScriptRoot "athena-startup-order.ps1")
+$Services = Get-AthenaServicesReversed
 
-# ── Preflight ─────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "  Athena Preflight" -ForegroundColor Cyan
-Write-Host "  ----------------" -ForegroundColor Cyan
+Write-Host "  Athena - stop the stack" -ForegroundColor Cyan
+Write-Host ""
 
-# 1. Docker installed?
+Write-Host "  [1] Preflight" -ForegroundColor Yellow
 $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $dockerCmd) {
-    Write-Host "  Docker         [FAIL] not installed" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Please install Docker Desktop and try again." -ForegroundColor Red
+    Write-Host "    [FAIL] Docker not installed" -ForegroundColor Red
+    Write-Host "    Please install Docker Desktop and try again." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Docker         [OK]   installed"
+Write-Host "    [OK] Docker installed" -ForegroundColor Green
 
-# 2. Docker Engine running?
 docker version --format '{{.Server.Version}}' | Out-Null
-$engineOk = ($LASTEXITCODE -eq 0)
-if ($engineOk) {
-    Write-Host "  Docker Engine  [OK]   running"
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "    [OK] Docker Engine running" -ForegroundColor Green
 } else {
-    Write-Host "  Docker Engine  [FAIL] not running" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Please start Docker Desktop and run Athena again." -ForegroundColor Red
+    Write-Host "    [FAIL] Docker Engine not running" -ForegroundColor Red
+    Write-Host "    Please start Docker Desktop and try again." -ForegroundColor Red
     exit 1
 }
 
-# 3. Docker Compose available?
 docker compose version | Out-Null
-$composeOk = ($LASTEXITCODE -eq 0)
-if ($composeOk) {
-    Write-Host "  Docker Compose [OK]   available"
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "    [OK] Docker Compose available" -ForegroundColor Green
 } else {
-    Write-Host "  Docker Compose [FAIL] not available" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Please install the Docker Compose plugin and run Athena again." -ForegroundColor Red
+    Write-Host "    [FAIL] Docker Compose not available" -ForegroundColor Red
+    Write-Host "    Please install the Docker Compose plugin and try again." -ForegroundColor Red
     exit 1
 }
 
 Write-Host ""
-Write-Host "  Proceeding..." -ForegroundColor Green
-Write-Host ""
-
-# ── Tear down ─────────────────────────────────────────────────────────────
-$Services = @("edge\tailscale", "edge\caddy", "ai\opennotebook", "databases\surrealdb")
-Write-Host "  Athena - tearing down (DATA preserved)" -ForegroundColor Cyan
+Write-Host "  [2] Stopping services" -ForegroundColor Yellow
+if ($Services.Count -eq 0) {
+    Write-Host "    [SKIP] No services found under: $AthenaCompose" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Stack stopped. DATA/ is preserved." -ForegroundColor Green
+    exit 0
+}
 $allOk = $true
 foreach ($svc in $Services) {
-    Write-Host "  stopping $svc ..." -NoNewline
-    Push-Location (Join-Path $ComposeDir $svc)
-    docker compose down | Out-Null
-    $svcOk = ($LASTEXITCODE -eq 0)
+    Push-Location (Join-Path $AthenaCompose $svc)
+    # Compose progress goes to stderr; drop both streams, keep the exit code.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $null = docker compose down 2>$null | Out-Null
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
     Pop-Location
-    if ($svcOk) {
-        Write-Host " OK" -ForegroundColor Green
+    if ($code -eq 0) {
+        Write-Host "    [OK] $svc  stopped" -ForegroundColor Green
     } else {
-        Write-Host " FAILED" -ForegroundColor Red
+        Write-Host "    [FAIL] $svc  could not be stopped (exit $code)" -ForegroundColor Red
         $allOk = $false
     }
 }
+
 Write-Host ""
 if ($allOk) {
-    Write-Host "  Stack stopped. DATA/ is unchanged." -ForegroundColor Green
+    Write-Host "  Stack stopped. DATA/ is preserved." -ForegroundColor Green
 } else {
     Write-Host "  Some services failed to stop. Check output above." -ForegroundColor Yellow
+    exit 1
 }
 Write-Host ""
