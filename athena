@@ -1,17 +1,31 @@
-# Athena — single entry point.
+#!/usr/bin/env bash
+# athena — single entry point.
 #
-#   ./athena up      bring up the minimal stack (Caddy, Tailscale, Open Notebook, SurrealDB)
-#   ./athena down    tear down (data preserved in DATA/)
-#   ./athena restart restart every service
-#   ./athena status  show which services are up
-#   ./athena doctor  verify docker, .env files, and secret presence
-#   ./athena help    usage
+#   ./athena create    provision a fresh workspace (DATA/, .env, network)
+#   ./athena up        bring up the stack (start only, idempotent)
+#   ./athena down      tear down (data preserved in DATA/)
+#   ./athena restart   restart every service
+#   ./athena recreate  force-recreate containers (keeps DATA/)
+#   ./athena status    show which services are up + open ports
+#   ./athena doctor    verify docker, .env files, secrets, orphans
+#   ./athena deps      dependency report (+ install hints)
+#   ./athena help      usage
 #
-# This is a thin wrapper around INFRASTRUCTURE/scripts/athena-*.sh, which is
-# the canonical implementation.
+# Thin wrapper around INFRASTRUCTURE/scripts/athena-*.sh.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CMD="${1:-help}"
-shift || true
-exec bash "$ROOT/INFRASTRUCTURE/scripts/athena-$CMD.sh" "$@" 2>/dev/null \
-  || { echo "athena: unknown command '$CMD' — try: up | down | restart | status | doctor"; exit 1; }
+[ $# -gt 0 ] && shift
+
+case "$CMD" in
+  create|up|down|restart|recreate|status|doctor)
+    exec bash "$ROOT/INFRASTRUCTURE/scripts/athena-$CMD.sh" "$@" ;;
+  deps)
+    exec bash "$ROOT/INFRASTRUCTURE/scripts/athena-deps.sh" "$@" ;;
+  help|-h|--help)
+    sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0 ;;
+  *)
+    echo "athena: unknown command '$CMD' — try: create | up | down | restart | recreate | status | doctor | deps | help"
+    exit 1 ;;
+esac
