@@ -21,10 +21,10 @@ athena_published_ports() { # <servicedir>
   raw="$(cd "$dir" && docker compose ps --format json 2>/dev/null)" || return 0
   [ -n "$raw" ] || return 0
   printf '%s\n' "$raw" | jq -r '
-    .[]
+    (if type == "array" then .[] else . end)
     | (.Publishers // [])[]
-    | select((.URL // "0.0.0.0") | IN("0.0.0.0", "", "[::]"))
-    | select((.PublishedPort // "0") | tonumber > 0)
+    | select((.URL // "0.0.0.0") | IN("0.0.0.0", "0", "", "::"))
+    | select((.PublishedPort | tostring | tonumber) > 0)
     | [.PublishedPort, (.URL // "0.0.0.0")] | @tsv
   ' 2>/dev/null
 }
