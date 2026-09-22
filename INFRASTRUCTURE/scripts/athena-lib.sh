@@ -188,6 +188,93 @@ athena_data_subdirs() { # prints one subpath per line ('' when none)
     | sort -u
 }
 
+# --- Per-service effective container uid ---
+# A service whose data dir is bind-mounted must be able to WRITE it. If the
+# container runs non-root, the dir must be owned by that uid. The effective uid
+# is: an explicit `user:` line in the compose file, else the IMAGE's default
+# USER (e.g. surrealdb ships as 65532), else 0 (root — always writable).
+# Tests may pin the value with ATHENA_DATA_OWNER_UID_<SECTION>_<NAME> (underscores).
+athena_data_owner_required() { # <svc> -> prints uid ('' = no requirement / unknown)
+  local svc="${1:-}"
+  local key="ATHENA_DATA_OWNER_UID_${svc//\//_}"
+  local override; override="${!key:-}"
+  [ -n "$override" ] && { printf '%s' "$override"; return 0; }
+  local f d u img
+  for f in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+    d="$ATHENA_COMPOSE/$svc/$f"
+    [ -f "$d" ] || continue
+    u="$(sed -nE 's/^[[:space:]]*user:[[:space:]]*["'\'']?([0-9]+)(:[0-9]+)?[[:space:]]*$/\1/p' "$d" | head -n1)"
+    [ -n "$u" ] && { printf '%s' "$u"; return 0; }
+    img="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*["'\'']?([^"'\''[:space:]]+).*/\1/p' "$d" | head -n1)"
+    if [ -n "$img" ]; then
+      local iu
+      iu="$(docker image inspect "$img" --format '{{.Config.User}}' 2>/dev/null | head -n1)"
+      if [ -n "$iu" ]; then
+        case "$iu" in
+          root) printf '0' ;;
+          *[!0-9]*) : ;;            # name-only user — not resolvable here
+          *) printf '%s' "$iu" ;;   # numeric uid
+        esac
+        return 0
+      fi
+    fi
+    return 0
+  done
+  return 0
+}
+
+# Make DATA/<sub> owned by the uid the service needs. As root: chown directly.
+# As a normal user: try `sudo -n` first (no prompt), then plain `sudo` (prompts)
+# only when attached to a TTY. Returns 0 when owned correctly / chown succeeded.
+athena_owner_enforce_enabled() { # 0 when the ownership check/fix should run
+  # uid enforcement is a Linux-filesystem concern; Docker Desktop (Windows) does
+  # not enforce it and stat -c '%u' is meaningless there — no-op off-Linux by
+  # default. Tests force it on with ATHENA_DATA_OWNER_ENFORCE=1.
+  if [ -n "${ATHENA_DATA_OWNER_ENFORCE:-}" ]; then return 0; fi
+  case "$(uname -s 2>/dev/null)" in Linux) return 0 ;; *) return 1 ;; esac
+}
+
+athena_ensure_data_owner() { # <svc> — ensure all of <svc>'s DATA subdirs are owned correctly
+  local svc="${1:-}"
+  [ -n "$svc" ] || return 0
+  athena_owner_enforce_enabled || return 0
+  local need; need="$(athena_data_owner_required "$svc" "$svc")"
+  [ -n "$need" ] || return 0
+  local rc=0 sub d cur
+  for sub in $(athena_data_subdirs); do
+    [ -z "$sub" ] && continue
+    case "$sub/" in "${svc%/}/"*) : ;; *) continue ;; esac
+    d="$ATHENA_DATA/$sub"
+    [ -d "$d" ] || continue
+    cur="$(stat -c '%u' "$d" 2>/dev/null || printf '?')"
+    [ "$cur" = "$need" ] && continue
+    if [ "$(id -u)" = "0" ]; then
+      if chown "$need:$need" "$d" 2>/dev/null; then
+        echo "    ${C_GREEN}[OK] DATA/$sub  ownership fixed to uid $need (root)${C_OFF}"
+      else
+        echo "    ${C_RED}[FAIL] DATA/$sub  needs owner uid $need — chown failed${C_OFF}" >&2
+        rc=1
+      fi
+      continue
+    fi
+    if command -v sudo >/dev/null 2>&1; then
+      if sudo -n chown "$need:$need" "$d" 2>/dev/null; then
+        echo "    ${C_GREEN}[OK] DATA/$sub  ownership fixed to uid $need (sudo)${C_OFF}"
+        continue
+      fi
+      if [ -t 0 ] && sudo chown "$need:$need" "$d" 2>/dev/null; then
+        echo "    ${C_GREEN}[OK] DATA/$sub  ownership fixed to uid $need (sudo)${C_OFF}"
+        continue
+      fi
+      echo "    ${C_YELLOW}[OWN ] DATA/$sub  owned by uid $cur, service needs uid $need — fix: sudo chown $need:$need \"$d\"${C_OFF}" >&2
+      rc=1; continue
+    fi
+    echo "    ${C_YELLOW}[OWN ] DATA/$sub  owned by uid $cur, service needs uid $need — fix: chown $need:$need \"$d\"${C_OFF}" >&2
+    rc=1
+  done
+  return "$rc"
+}
+
 # --- Shared provisioning (idempotent): DATA root, .env seeding, shared password, network ---
 # No images, no containers. Honors ATHENA_DATA_DIR / ATHENA_ASSETS_DIR.
 
@@ -208,6 +295,18 @@ athena_provision() {
     echo "    ${C_GREEN}[OK] Created DATA/ layout under: $ATHENA_DATA${C_OFF}"
   else
     echo "    ${C_GREEN}[OK] DATA/ layout present: $ATHENA_DATA${C_OFF}"
+  fi
+  # Ensure each service's data dir is owned by the uid that service's container
+  # runs as (non-root containers, e.g. surrealdb 65532, can't write a dir owned
+  # by the invoking user). As a normal user this may need one `sudo` (TTY).
+  # Never fatal — a failure is reported here and re-flagged by doctor.
+  local own_rc=0
+  for svc in "${services[@]-}"; do
+    [ -n "$svc" ] || continue
+    athena_ensure_data_owner "$svc" || own_rc=1
+  done
+  if [ "$own_rc" -ne 0 ]; then
+    echo "    ${C_YELLOW}[WARN] some DATA dir ownership could not be set — see lines above / ./athena doctor${C_OFF}"
   fi
 
   echo ""

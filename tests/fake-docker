@@ -11,6 +11,19 @@ case "$1" in
   version)
     [ "${FAKE_DOCKER_DAEMON:-1}" = "1" ] || exit 1
     echo "27.0.0-fake" ;;
+  image)
+    shift
+    case "$1" in
+      inspect)
+        # mimic real docker: print .Config.User for known images
+        img="$2"
+        case "$img" in
+          surrealdb/*)  echo "65532" ;;
+          lfnovo/open_notebook*) echo "root" ;;
+          *) echo "" ;;
+        esac ;;
+      *) exit 0 ;;
+    esac ;;
   info)
     [ "${FAKE_DOCKER_DAEMON:-1}" = "1" ] || exit 1
     echo "Containers: 0 (fake)" ;;

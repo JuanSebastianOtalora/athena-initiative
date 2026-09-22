@@ -111,6 +111,17 @@ case "$target" in
     check  "doctor: flags the orphan"      "$out" "rogue-1"
     check_not "doctor: does NOT flag known surrealdb" "$out" "surreal-1"
     check  "doctor: checks DATA layout"    "$out" "DATA layout"
+    # DATA ownership: a non-root container (surrealdb) needs its dir owned by 65532.
+    # Simulate the aux-sys failure (dir owned by the invoking user) -> doctor must flag it
+    # with the exact fix; with the correct owner -> OK. Uses the test override var.
+    mkdir -p "$T/repo/DATA/databases/surrealdb"
+    out_bad="$(ATHENA_DATA_OWNER_ENFORCE=1 ATHENA_DATA_OWNER_UID_databases_surrealdb=99999 bash "$S/athena-doctor.sh" 2>&1)"
+    check   "doctor: flags wrong-owned DATA dir"        "$out_bad" "[OWN ]"
+    check   "doctor: names the needed uid (99999)"      "$out_bad" "runs as uid 99999"
+    check   "doctor: gives the chown fix"               "$out_bad" "chown 99999:99999"
+    out_ok="$(ATHENA_DATA_OWNER_ENFORCE=1 ATHENA_DATA_OWNER_UID_databases_surrealdb="$(id -u)" bash "$S/athena-doctor.sh" 2>&1)"
+    check   "doctor: OK when DATA dir owner is correct"  "$out_ok" "[OK] DATA/databases/surrealdb"
+    check_not "doctor: no [OWN] when owner correct"      "$out_ok" "[OWN ]"
     ;;
   recreate)
     out="$(printf 'E\n' | run athena-recreate.sh)"; rc=$?
