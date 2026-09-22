@@ -48,14 +48,29 @@ done
 
 echo ""
 echo "  ${C_YELLOW}[3] DATA layout${C_OFF}"
-# Per-service data paths live in the compose.yaml volumes (Docker creates them
-# on `up`), so doctor only asserts the single DATA/ root exists.
-if [ -d "$ATHENA_DATA" ]; then
-  echo "    ${C_GREEN}[OK] DATA/ root present: $ATHENA_DATA${C_OFF}"
-else
-  echo "    ${C_YELLOW}[MISS] DATA/ root  (run ./athena up to create)${C_OFF}"
+if [ ! -d "$ATHENA_DATA" ]; then
+  echo "    ${C_YELLOW}[MISS] DATA/ root  (run ./athena create to create)${C_OFF}"
   issues=$((issues+1))
 fi
+# Every per-service data dir the compose files bind-mount must exist. If it's
+# missing, `up` will make Docker's root daemon create it (root-owned), which
+# breaks containers that run non-root (surrealdb).
+while IFS= read -r sub; do
+  [ -n "$sub" ] || continue
+  d="$ATHENA_DATA/$sub"
+  if [ ! -d "$d" ]; then
+    echo "    ${C_YELLOW}[MISS] DATA/$sub  (run ./athena create to create)${C_OFF}"
+    issues=$((issues+1))
+  else
+    owner_id="$(stat -c '%u' "$d" 2>/dev/null || echo '?')"
+    if [ "$owner_id" = "0" ] && [ "$(id -u)" != "0" ]; then
+      echo "    ${C_RED}[OWN ] DATA/$sub  owned by root — containers running non-root can't write here (fix: sudo chown $(id -un):$(id -gn) "$d")${C_OFF}"
+      issues=$((issues+1))
+    else
+      echo "    ${C_GREEN}[OK] DATA/$sub${C_OFF}"
+    fi
+  fi
+done < <(athena_data_subdirs)
 
 echo ""
 echo "  ${C_YELLOW}[4] Orphan containers${C_OFF}"

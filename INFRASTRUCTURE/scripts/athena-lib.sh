@@ -173,6 +173,21 @@ athena_install_hint() { # <dep> — the exact install command, or a manual note
   fi
 }
 
+# --- DATA subdirs declared by the compose files ---
+# Bind-mounts written as ${ATHENA_DATA_DIR:-...}/<sub>... in any compose file
+# are the per-service data dirs. Pre-creating them (user-owned) BEFORE any
+# container starts matters: when the host dir of a bind-mount is missing, the
+# Docker daemon (always root) auto-creates it as root:root — and a container
+# that runs as a non-root user (e.g. surrealdb, uid 65532) then fails with
+# PermissionDenied. Created early as the invoking user, they're owned by them.
+athena_data_subdirs() { # prints one subpath per line ('' when none)
+  [ -d "$ATHENA_COMPOSE" ] || return 0
+  grep -rhE '^[[:space:]]*-[[:space:]]*.*ATHENA_DATA_DIR' "$ATHENA_COMPOSE" 2>/dev/null \
+    | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/.*ATHENA_DATA_DIR[^}]*\}//; s/:\S*$//; s#^/+##' \
+    | grep -E '^[A-Za-z0-9._/-]+$' \
+    | sort -u
+}
+
 # --- Shared provisioning (idempotent): DATA root, .env seeding, shared password, network ---
 # No images, no containers. Honors ATHENA_DATA_DIR / ATHENA_ASSETS_DIR.
 
@@ -183,8 +198,14 @@ athena_provision() {
   echo "  ${C_YELLOW}[2] DATA layout${C_OFF}"
   [ -d "$ATHENA_DATA" ]   || { mkdir -p "$ATHENA_DATA";   created=1; }
   [ -d "$ATHENA_ASSETS" ] || { mkdir -p "$ATHENA_ASSETS"; created=1; }
+  # Pre-create every per-service DATA subdir the compose files bind-mount,
+  # owned by the invoking user (see athena_data_subdirs).
+  local sub
+  for sub in $(athena_data_subdirs); do
+    [ -d "$ATHENA_DATA/$sub" ] || { mkdir -p "$ATHENA_DATA/$sub"; created=1; }
+  done
   if [ "$created" -gt 0 ]; then
-    echo "    ${C_GREEN}[OK] Created DATA/ root + media/ under: $ATHENA_DATA${C_OFF}"
+    echo "    ${C_GREEN}[OK] Created DATA/ layout under: $ATHENA_DATA${C_OFF}"
   else
     echo "    ${C_GREEN}[OK] DATA/ layout present: $ATHENA_DATA${C_OFF}"
   fi
