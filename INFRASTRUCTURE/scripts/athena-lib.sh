@@ -208,7 +208,12 @@ athena_data_owner_required() { # <svc> -> prints uid ('' = no requirement / unkn
     img="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*["'\'']?([^"'\''[:space:]]+).*/\1/p' "$d" | head -n1)"
     if [ -n "$img" ]; then
       local iu
-      iu="$(docker image inspect "$img" --format '{{.Config.User}}' 2>/dev/null | head -n1)"
+      # timeout guard: a stuck docker daemon must not hang provisioning
+      if command -v timeout >/dev/null 2>&1; then
+        iu="$(timeout 10 docker image inspect "$img" --format '{{.Config.User}}' 2>/dev/null | head -n1)"
+      else
+        iu="$(docker image inspect "$img" --format '{{.Config.User}}' 2>/dev/null | head -n1)"
+      fi
       if [ -n "$iu" ]; then
         case "$iu" in
           root) printf '0' ;;
@@ -218,6 +223,11 @@ athena_data_owner_required() { # <svc> -> prints uid ('' = no requirement / unkn
         return 0
       fi
     fi
+    # Fallback: well-known images whose default USER we can't inspect right
+    # now (image not pulled, daemon wedged). surrealdb ships uid 65532.
+    case "$img" in
+      *surrealdb/surrealdb*) printf '65532' ;;
+    esac
     return 0
   done
   return 0
