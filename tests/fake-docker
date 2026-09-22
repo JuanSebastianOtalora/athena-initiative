@@ -32,7 +32,13 @@ case "$1" in
     case "$1" in
       version) echo "Docker Compose version v2.27.0-fake" ;;
       up)      echo "starting (fake)" ;;
-      down)    echo "stopping (fake)" ;;
+      down)
+        if [ "${FAKE_COMPOSE_DOWN_FAIL:-0}" = "1" ]; then
+          echo "Error response from daemon: driver failed programming external connectivity" >&2
+          echo "  endpoint sandbox not found" >&2
+          exit 1
+        fi
+        echo "stopping (fake)" ;;
       restart) echo "restarting (fake)" ;;
       pull)    echo "pulling (fake)" ;;
       ps)

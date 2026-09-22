@@ -124,9 +124,16 @@ athena_docker_ok() { # 0 when engine AND compose plugin are usable
   docker compose version >/dev/null 2>&1
 }
 
-athena_compose_run() { # <servicedir> <compose-args...> — suppressed output, returns docker's rc
+athena_compose_run() { # <servicedir> <compose-args...> — quiet on success; on failure
+  # shows the last non-empty docker error lines (otherwise 'exit 1' tells us nothing).
   local dir="$1"; shift
-  ( cd "$dir" && docker "$@" >/dev/null 2>&1 )
+  local out rc
+  out="$(cd "$dir" && docker "$@" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -n "$out" ]; then
+    printf '%s\n' "$out" | grep -vE '^[[:space:]]*$' | tail -n 2 | sed 's/^/      docker: /' >&2
+  fi
+  return "$rc"
 }
 
 # --- Dependency hints (distro-aware; the ONLY place package names are spelled out) ---
