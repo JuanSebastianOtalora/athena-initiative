@@ -74,7 +74,14 @@ athena_services_reversed() {
 # --- .env helpers ---
 
 athena_env_set() { # <envfile> <key> <value> — set (replace first match) or append
+  # Safety: if we cannot READ the existing file, refuse to touch it. The old
+  # behavior (cp fails -> empty temp -> mv overwrites) silently truncated a
+  # root-owned 0600 .env to a single line.
   local file="$1" key="$2" val="$3" tmp
+  if [ -f "$file" ] && [ ! -r "$file" ]; then
+    echo "    ${C_RED}[FAIL] $file  not readable — NOT modified. fix: sudo chown $(id -u):$(id -g) \"$file\"${C_OFF}" >&2
+    return 1
+  fi
   tmp="$(mktemp)"
   if [ -f "$file" ] && grep -Eq "^[[:space:]]*${key}[[:space:]]*=" "$file"; then
     sed -E "s|^[[:space:]]*${key}[[:space:]]*=.*|${key}=${val}|" "$file" > "$tmp"
@@ -82,7 +89,12 @@ athena_env_set() { # <envfile> <key> <value> — set (replace first match) or ap
     [ -f "$file" ] && cp "$file" "$tmp" || : > "$tmp"
     printf '%s\n' "${key}=${val}" >> "$tmp"
   fi
-  mv "$tmp" "$file"
+  # -f: never prompt interactively (a non-writable destination used to hang scripts)
+  if ! mv -f "$tmp" "$file" 2>/dev/null; then
+    echo "    ${C_RED}[FAIL] $file  could not be updated (permissions?)${C_OFF}" >&2
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 athena_env_get() { # <envfile> <key> — value of first KEY=... line, '' if absent
@@ -285,6 +297,26 @@ athena_ensure_data_owner() { # <svc> — ensure all of <svc>'s DATA subdirs are 
   return "$rc"
 }
 
+# A .env that exists but the invoking user cannot read (root-owned 0600 left by
+# an earlier root/su run) blocks both seeding and sync — and would otherwise be
+# silently truncated by a sync (the aux-sys .env-loss bug). Self-heal it by taking
+# ownership with sudo (passwordless, then TTY), which preserves whatever content
+# is there and leaves the file usable by the invoking user. Running as root:
+# chown directly. Returns 0 when the file is (now) readable by the invoker.
+athena_env_heal() { # <envfile> — 0 when the file is readable (or was made readable)
+  local file="$1"
+  [ -f "$file" ] || return 0
+  [ -r "$file" ] && return 0
+  if [ "$(id -u)" = "0" ]; then
+    chown "$(id -u)" "$file" 2>/dev/null && return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n chown "$(id -u):$(id -g)" "$file" 2>/dev/null; then return 0; fi
+    if [ -t 0 ] && sudo chown "$(id -u):$(id -g)" "$file" 2>/dev/null; then return 0; fi
+  fi
+  return 1
+}
+
 # --- Shared provisioning (idempotent): DATA root, .env seeding, shared password, network ---
 # No images, no containers. Honors ATHENA_DATA_DIR / ATHENA_ASSETS_DIR.
 
@@ -331,6 +363,22 @@ athena_provision() {
     else
       echo "    ${C_GREEN}[OK] $svc  exists${C_OFF}"
     fi
+    if [ -f "$env_file" ] && [ ! -r "$env_file" ]; then
+      if athena_env_heal "$env_file"; then
+        echo "    ${C_YELLOW}[FIX ] $svc  .env was unreadable (root-owned) — ownership restored${C_OFF}"
+      else
+        echo "    ${C_YELLOW}[WARN] $svc  .env is unreadable (root-owned?) — could not take ownership. fix: sudo chown \$(id -u) \"$env_file\"${C_OFF}"
+      fi
+    fi
+    # Truncation guard: a .env with far fewer keys than its .env.example was
+    # almost certainly clobbered (the aux-sys sync bug). Tell the user loudly.
+    if [ -f "$env_file" ] && [ -r "$env_file" ] && [ -f "$example" ]; then
+      have="$(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" 2>/dev/null || printf 0)"
+      want="$(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$example" 2>/dev/null || printf 0)"
+      if [ "$have" -lt 2 ] && [ "$want" -ge 3 ]; then
+        echo "    ${C_YELLOW}[WARN] $svc  .env looks TRUNCATED ($have of $want keys) — expected from the old sync bug. fix: rm \"$env_file\" && ./athena create${C_OFF}"
+      fi
+    fi
     ENV_FILES[$svc]="$env_file"
   done
 
@@ -360,9 +408,14 @@ athena_provision() {
       shared_pass="$(athena_gen_password)"
       echo "    ${C_GREEN}[OK] Generated new shared password${C_OFF}"
     fi
-    if [ -n "$surreal_env" ];  then athena_env_set "$surreal_env"  SURREAL_PASSWORD "$shared_pass"; synced=$((synced+1)); fi
-    if [ -n "$notebook_env" ]; then athena_env_set "$notebook_env" SURREAL_PASSWORD "$shared_pass"; synced=$((synced+1)); fi
-    echo "    ${C_GREEN}[OK] Synchronized to $synced .env files${C_OFF}"
+    local sync_fail=0
+    if [ -n "$surreal_env" ];  then athena_env_set "$surreal_env"  SURREAL_PASSWORD "$shared_pass" && synced=$((synced+1)) || sync_fail=1; fi
+    if [ -n "$notebook_env" ]; then athena_env_set "$notebook_env" SURREAL_PASSWORD "$shared_pass" && synced=$((synced+1)) || sync_fail=1; fi
+    if [ "$sync_fail" -eq 0 ]; then
+      echo "    ${C_GREEN}[OK] Synchronized to $synced .env files${C_OFF}"
+    else
+      echo "    ${C_RED}[FAIL] password synced to $synced file(s) only — see [FAIL] lines above (run ./athena doctor)${C_OFF}" >&2
+    fi
   fi
 
   echo ""
