@@ -1,4 +1,4 @@
-# athena-lib.sh — shared config + discovery for the athena-*.sh scripts (Linux).
+# athena-lib.sh -- shared config + discovery for the athena-*.sh scripts (Linux).
 #
 #   This is the ONE file you edit when Athena grows.
 #   Every command script dot-sources it:
@@ -73,7 +73,7 @@ athena_services_reversed() {
 
 # --- .env helpers ---
 
-athena_env_set() { # <envfile> <key> <value> — set (replace first match) or append
+athena_env_set() { # <envfile> <key> <value> set (replace first match) or append
   # Safety: if we cannot READ the existing file, refuse to touch it. The old
   # behavior (cp fails -> empty temp -> mv overwrites) silently truncated a
   # root-owned 0600 .env to a single line.
@@ -222,7 +222,8 @@ athena_data_owner_required() { # <svc> -> prints uid ('' = no requirement / unkn
   for f in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
     d="$ATHENA_COMPOSE/$svc/$f"
     [ -f "$d" ] || continue
-    u="$(sed -nE 's/^[[:space:]]*user:[[:space:]]*["'\'']?([0-9]+)(:[0-9]+)?[[:space:]]*$/\1/p' "$d" | head -n1)"
+    u="$(sed -nE 's/^[[:space:]]*user:[[:space:]]*["'\'']?([0-9]+|root)(:[0-9]+)?[[:space:]]*$/\1/p' "$d" | head -n1)"
+    case "$u" in root) u=0 ;; esac
     [ -n "$u" ] && { printf '%s' "$u"; return 0; }
     img="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*["'\'']?([^"'\''[:space:]]+).*/\1/p' "$d" | head -n1)"
     if [ -n "$img" ]; then
@@ -268,7 +269,8 @@ athena_ensure_data_owner() { # <svc> — ensure all of <svc>'s DATA subdirs are 
   [ -n "$svc" ] || return 0
   athena_owner_enforce_enabled || return 0
   local need; need="$(athena_data_owner_required "$svc" "$svc")"
-  [ -n "$need" ] || return 0
+  # root services (user: root) write anything — no chown needed
+  [ -n "$need" ] && [ "$need" != "0" ] || return 0
   local rc=0 sub d cur
   for sub in $(athena_data_subdirs); do
     [ -z "$sub" ] && continue

@@ -27,7 +27,7 @@ Both families do **exactly the same things** same commands, same output layout, 
 
 - ~4 GB free RAM, ~2 GB free disk (minimal tier).
 
-- **`jq`**a tiny JSON tool, used by `athena status` to list published ports.
+- **`jq`** a tiny JSON tool, used by `athena status` to list published ports.
 
 **Optional**: every command works without it; `status` just skips the port check.
 
@@ -113,7 +113,7 @@ After `up`, the published ports (as reported by `./athena status`) are typically
 
 ## Adding a custom service
 
-Drop a new `INFRASTRUCTURE/compose/<section>/<name>/compose.yaml` and it's discovered automatically — no script edits. For its data to be pre-created and owned by you (so non-root containers can write), mount it under the data root: `${ATHENA_DATA_DIR:-./DATA}/<name>`. A host path outside that root is *not* auto-created — create and chown it yourself before the first `up`. If a container later fails with `PermissionDenied`, `./athena doctor` flags the root-owned dir and tells you the `chown` fix.
+Drop a new `INFRASTRUCTURE/compose/<section>/<name>/compose.yaml` and it's discovered automatically. No script edits. For its data to be pre-created and owned by you (so non-root containers can write), mount it under the data root: `${ATHENA_DATA_DIR:-./DATA}/<name>`. A host path outside that root is *not* auto-created: create and chown it yourself before the first `up`. If a container later fails with `PermissionDenied`, `./athena doctor` flags the dir and tells you the fix.
 
 ## Troubleshooting
 
@@ -121,8 +121,8 @@ Drop a new `INFRASTRUCTURE/compose/<section>/<name>/compose.yaml` and it's disco
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Docker / Compose not available`            | Start Docker Desktop (Windows) or the `docker` service (Linux: `sudo systemctl start docker`), then re-run.                                                   |
 | `status` says `jq not found`                | Install `jq` (above). Everything else still works.                                                                                                            |
-| `./athena` fails with `$'\r': command not found`  | CRLF line endings — copied off a Windows machine (`core.autocrlf=true` turns checkouts CRLF). Fix: `dos2unix athena INFRASTRUCTURE/scripts/*.sh`, or copy from a `git archive` / fresh clone (committed blobs are always LF; Windows working trees are not). |
-| `surrealdb` restarts with `PermissionDenied`  | `DATA/databases/surrealdb` is root-owned (Docker's root daemon created it). Fix: `sudo chown <you> DATA/databases/surrealdb`, then `docker restart athena-surrealdb`. `./athena doctor` flags this as `[OWN]`. `                    |
+| `./athena` fails with garbled text on Linux | Your checkout has CRLF line endings. Fix: `dos2unix athena INFRASTRUCTURE/scripts/*.sh` (or re-clone; `.gitattributes` now enforces LF).                      |
+| `surrealdb` restarts with `PermissionDenied` | Its image ships uid 65532, which can't write a host dir owned by another user on Linux (lfnovo/open-notebook#409). This repo's compose sets `user: root` to avoid it. If you removed that line: restore it, or `sudo chown 65532:65532 DATA/databases/surrealdb && docker restart athena-surrealdb`. `./athena doctor` flags any ownership mismatch as `[OWN]`. |
 | A port is already in use                    | Another process owns it. `./athena status` shows which service publishes it; stop the conflicting process or change the port in the service's `compose.yaml`. |
 | Something feels wrong                       | `./athena doctor` it lists every issue it finds and how to fix it.                                                                                            |
 

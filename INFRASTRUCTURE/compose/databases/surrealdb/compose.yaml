@@ -1,16 +1,18 @@
-# Athena — SurrealDB (graph + document store)
+# Athena SurrealDB (graph + document store)
 #
 #   What Athena PRESERVES:  ${ATHENA_DATA_DIR}/databases/surrealdb   (bind-mounted)
 #   How Athena RUNS it:     this file (image, command, network, restart)
 #
-#   ATHENA_DATA_DIR is set by INFRASTRUCTURE/scripts/*.sh to the absolute
-#   repo-root DATA/ dir. The `:-./DATA` default makes a direct
-#   `docker compose up` from the repo root work too.
+#   ATHENA_DATA_DIR is set by INFRASTRUCTURE/scripts/*.sh to the absolute repo-root DATA/ dir. The `:-./DATA` default makes a direct `docker compose up` from the repo root work too.
+
 services:
   surrealdb:
     image: surrealdb/surrealdb:v2
     container_name: athena-surrealdb
     restart: unless-stopped
+    # Runs as root: the image's default user (65532) cannot write bind-mounted host dirs owned by the invoking user, so it crash-loops with
+    # PermissionDenied on Linux (lfnovo/open-notebook#409). Root sidesteps it at the cost of least-privilege the trade we chose after the chown approach kept hitting host-permission edge cases.
+    user: root
 
     env_file:
       - .env

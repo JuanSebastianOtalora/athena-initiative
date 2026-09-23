@@ -1,9 +1,7 @@
 # Scripts reference what each script does, section by section
 
-
 A plain-language tour of the stack-manager scripts, for people who want to **understand** them or use them as a **base for their own automation**.
   
-
 The PowerShell (`.ps1`) and bash (`.sh`) families are **behavioral twins**: same commands, same numbered sections, same exit codes. The tables below show both side by side the sections are identical, so reading one column tells you what the other does.
 
 ## The file map
@@ -35,8 +33,8 @@ The PowerShell (`.ps1`) and bash (`.sh`) families are **behavioral twins**: same
 
 - **Idempotent.** `create`, `up`, `recreate` are safe to re-run. Existing `.env` files are preserved; a real password is reused, never clobbered.
 
-- **DATA ownership is the scripts' job.** `create`/`up`/`recreate` pre-create every per-service `DATA/<…>` subdirectory (discovered from the compose files) *before* any container starts. This matters because when a bind-mount's host directory is missing, the Docker daemon (always root) auto-creates it **root-owned** — and containers that run as a non-root user (e.g. surrealdb) then fail with `PermissionDenied`. If you ever see that, `doctor` flags it (`[OWN] ... owned by root`) and the fix is `sudo chown <you> DATA/<dir>`. For services that run **non-root** (surrealdb ships as uid 65532), the dir must be owned by that uid — `create`/`up` detect each service's effective uid (compose `user:` line or the image default) and set it, asking for one `sudo` when you're a normal user. `doctor` flags any dir whose owner doesn't match with the exact `chown` to run. (Alternative: run such a service as `user: root` in its compose file — then ownership never matters.)
-  **Custom services:** any new service you add is auto-discovered — for its data to be pre-created and owned by you, mount it under the data root as `${ATHENA_DATA_DIR:-./DATA}/<name>`; a host path outside that root is *not* auto-created, so create/chown it yourself before the first `up`.
+- **DATA ownership is the scripts' job.** `create`/`up`/`recreate` pre-create every per-service `DATA/<…>/` subdirectory (discovered from the compose files) *before* any container starts. This matters because when a bind-mount's host directory is missing, the Docker daemon (always root) auto-creates it **root-owned**, and a container running as a non-root user then fails with `PermissionDenied`. `create`/`up` detect each service's effective uid (compose `user:` line or the image default) and set the dir's owner to it, asking for one `sudo` when you're a normal user; `doctor` flags any mismatch with the exact `chown` to run. `databases/surrealdb` instead declares `user: root` in its compose (its image ships uid 65532, which cannot write user-owned bind mounts on Linux), and the chown step skips such root services.
+  **Custom services:** any new service you add is auto-discovered. For its data to be pre-created and owned by you, mount it under the data root as `${ATHENA_DATA_DIR:-./DATA}/<name>`; a host path outside that root is *not* auto-created, so create/chown it yourself before the first `up`.
 
 - **No silent installs.** Nothing is ever installed without an explicit `y` from you (Linux `./athena deps install <dep>`).
 
@@ -45,12 +43,11 @@ The PowerShell (`.ps1`) and bash (`.sh`) families are **behavioral twins**: same
 
 > Provisions files and the network. **Pulls nothing, starts nothing.**
 
-  
 | Section                         | What it does                                                                                                                                                                                                                              |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[1] Docker & Compose`          | Hard check: engine running + Compose plugin available (the `athena` network needs Docker). Fails fast with a hint otherwise.                                                                                                              |
-| `[2] DATA layout`               | Creates the `DATA/` root, `DATA/media/`, and every per-service `DATA/<…>/` subdirectory the compose files bind-mount (discovered, not hardcoded) — owned by the invoking user, so non-root containers (surrealdb) can write.                |
-| `[3] Per-service .env files`    | For each discovered service: copies `.env.example` → `.env` (or creates an empty one). Existing `.env` is left alone.                                                                                                                     |
+| `[2] DATA layout`               | Creates the `DATA/` root, `DATA/media/`, and every per-service `DATA/<…>/` subdirectory the compose files bind-mount (discovered, not hardcoded) before any container starts, and sets each dir's owner to the service's effective uid when it needs one (one `sudo` prompt as a normal user; root services like surrealdb are skipped).                                                                                                                                                                                    |
+| `[3] Per-service .env files`    | For each discovered service: copies `.env.example` → `.env` (or creates an empty one). Existing `.env` is left alone. An unreadable (e.g. root-owned) `.env` is taken back with one `sudo chown` `[FIX]`; one that looks truncated vs its `.env.example` is flagged `[WARN]` with the exact fix (rm it and re-run `create`). A file the script can't read is never clobbered, and a failed sync reports `[FAIL]` instead of `[OK]`.                                                                                                                     |
 | `[4] Shared SurrealDB password` | If a real `SURREAL_PASSWORD` already exists (≥16 chars, not a placeholder) it is **reused**; otherwise a fresh 64-hex password is generated. It's written into **both** the surrealdb and opennotebook `.env` files so they always agree. |
 | `[5] Docker network`            | Ensures the shared external network `athena` exists (creates it if not).                                                                                                                                                                  |
 
@@ -71,7 +68,7 @@ Ends with the service URLs (Open Notebook, SurrealDB, Gateway) and a pointer to 
 | Section                 | What it does                                                                                                                                                                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[1] Preflight`         | Docker installed + engine running + Compose available.                                                                                                                                                                                                           |
-| `[2] Stopping services` | For each service in **reverse** startup order: `docker compose down`. Compose writes progress to stderr, so the scripts deliberately drop both streams and keep only the exit code (this is why `up`/`down` use `ErrorActionPreference=Continue` / no `set -e`). |
+| `[2] Stopping services` | For each service in **reverse** startup order: `docker compose down`. Compose writes progress to stderr, so the scripts deliberately drop both streams and keep only the exit code (this is why `up`/`down` use `ErrorActionPreference=Continue` / no `set -e`). On failure the last docker error lines are printed, so you see *why* a service couldn't stop, not just that it failed. |
 
 `DATA/` is always preserved, `down` only removes containers/networks of the services.
 
@@ -110,7 +107,7 @@ Ends with the service URLs (Open Notebook, SurrealDB, Gateway) and a pointer to 
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[1] Docker`            | Engine running (with version) + Compose plugin.                                                                                                                                                                                                   |
 | `[2] Per-service files` | For each discovered service: is `.env.example` present? Is `.env` present?                                                                                                                                                                        |
-| `[3] DATA layout`       | `DATA/` root exists, and every per-service `DATA/<…>/` subdirectory (from the compose files) exists. A subdirectory owned by **root** is flagged `[OWN]` — non-root containers can't write there; fix with `sudo chown <you> DATA/<dir>`.           |
+| `[3] DATA layout`       | `DATA/` root exists, and every per-service `DATA/<…>/` subdirectory (from the compose files) exists. A subdirectory owned by the wrong uid (e.g. **root** when the service runs non-root) is flagged `[OWN]` with the exact `chown` to run.                                                                                             |
 | `[4] Orphan containers` | Running containers whose compose **project** (via the `com.docker.compose.project` label) has no matching service directory i.e. the dir was deleted out from under them. Unrelated containers are never flagged. Suggests `docker rm -f <name>`. 
 
 Ends with `All checks passed.` or `# issue(s) found. See above.`
@@ -137,7 +134,8 @@ This is the **only distro-aware code** in the whole tree everything else is dist
 | **Colors**                  | ANSI colors auto-disabled when stdout isn't a terminal or `NO_COLOR` is set (Linux). PowerShell uses `Write-Host -ForegroundColor` directly.                                                         |
 | **Discovery**               | `Get-AthenaServiceDirs` / `athena_service_dirs` scans `compose/` for the four compose filenames, prints `section/name`.                                                                              |
 | **Ordering**                | `Get-AthenaServices` / `athena_services` startup order (listed first, the rest alphabetical); `…Reversed` for stop order.                                                                            |
-| **`.env` helpers**          | `Set-AthenaEnvFile` / `athena_env_set`, `Get-AthenaEnvValue` / `athena_env_get` read/write a single key in a `.env` file without clobbering the rest.                                                |
+| **`.env` helpers**          | `Set-AthenaEnvFile` / `athena_env_set`, `Get-AthenaEnvValue` / `athena_env_get` read/write a single key in a `.env` file without clobbering the rest. `athena_env_heal` (bash) takes ownership of a `.env` an earlier root run left unreadable (one `sudo chown`); a `.env` the script cannot read is never overwritten.
+| **DATA ownership**         | `athena_data_owner_required` / `athena_ensure_data_owner` (bash) find each service's effective uid (compose `user:` line, else the image default, else a small fallback map) and set each service's `DATA/` dir ownership to it; root services (`user: root`) are skipped.                                                |
 | **Secrets**                 | `Generate-AthenaSecurePassword` / `athena_gen_password` 64-hex, from `openssl rand -hex 32` with an `/dev/urandom` fallback (no openssl needed).                                                     |
 | **Provisioning**            | `Ensure-AthenaProvision` / `athena_provision` the shared `[2]…[5]` block that `create`/`up`/`recreate` all reuse (DATA layout → `.env` → password → network).                                        |
 | **Compose runner**          | `Invoke-AthenaCompose` / `athena_compose_run` `cd` into the service dir and run a compose command, returning its exit code.                                                                          |
@@ -146,7 +144,7 @@ This is the **only distro-aware code** in the whole tree everything else is dist
 ## Adapting this as a base
 
   
-1. **Add a service:** create `INFRASTRUCTURE/compose/<section>/<name>/` with a `compose.yaml` + `.env.example`. It's automatically discovered by every script.
+1. **Add a service:** create `INFRASTRUCTURE/compose/<section>/<name>/` with a `compose.yaml` + `.env.example`. It's automatically discovered by every script. Mount its data under the data root (`${ATHENA_DATA_DIR:-./DATA}/<name>`) so it gets pre-created and owned correctly.
 
 2. **Change start order:** edit the order list in the shared library.
 
