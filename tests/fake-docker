@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# fake-docker — emulates the docker surface the athena scripts use.
+# Logs every invocation (with cwd) to $FAKE_DOCKER_LOG for order assertions.
+set -u
+LOG="${FAKE_DOCKER_LOG:-/tmp/fake-docker.log}"
+STATE="${FAKE_DOCKER_STATE:-/tmp/fake-docker-state}"
+mkdir -p "$STATE"
+echo "cwd=$(pwd) args=$*" >> "$LOG"
+
+case "$1" in
+  version)
+    [ "${FAKE_DOCKER_DAEMON:-1}" = "1" ] || exit 1
+    echo "27.0.0-fake" ;;
+  image)
+    shift
+    case "$1" in
+      inspect)
+        # mimic real docker: print .Config.User for known images
+        img="$2"
+        case "$img" in
+          surrealdb/*)  echo "65532" ;;
+          lfnovo/open_notebook*) echo "root" ;;
+          *) echo "" ;;
+        esac ;;
+      *) exit 0 ;;
+    esac ;;
+  info)
+    [ "${FAKE_DOCKER_DAEMON:-1}" = "1" ] || exit 1
+    echo "Containers: 0 (fake)" ;;
+  compose)
+    shift
+    case "$1" in
+      version) echo "Docker Compose version v2.27.0-fake" ;;
+      up)      echo "starting (fake)" ;;
+      down)
+        if [ "${FAKE_COMPOSE_DOWN_FAIL:-0}" = "1" ]; then
+          echo "Error response from daemon: driver failed programming external connectivity" >&2
+          echo "  endpoint sandbox not found" >&2
+          exit 1
+        fi
+        echo "stopping (fake)" ;;
+      restart) echo "restarting (fake)" ;;
+      pull)    echo "pulling (fake)" ;;
+      ps)
+        if [[ "$*" == *"json"* ]]; then
+          cat <<'JSON'
+[
+  {"Name":"fake-1","Service":"fake","State":"running","Status":"Up",
+   "Publishers":[{"URL":"0.0.0.0","PublishedPort":"8000"}]}
+]
+JSON
+        else
+          echo "NAME      STATE"
+          echo "fake-1    running"
+        fi ;;
+      *) exit 0 ;;
+    esac ;;
+  network)
+    shift
+    case "$1" in
+      ls)
+        [ -f "$STATE/net-athena" ] && echo "athena"
+        echo "bridge"; echo "host"; echo "none" ;;
+      create) case " $* " in *" athena "*) touch "$STATE/net-athena" ;; esac ;;
+      inspect) [ -f "$STATE/net-athena" ] && exit 0 || exit 1 ;;
+      *) exit 0 ;;
+    esac ;;
+  ps)
+    # one ORPHAN (project has no matching service dir) + one KNOWN (surrealdb)
+    printf 'abcd1234\trogue-1\trogue-project\n'
+    printf 'efgh5678\tsurreal-1\tsurrealdb\n'
+    ;;
+  *) exit 0 ;;
+esac
